@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-""" Finetuning models on UNFAIR-ToC (e.g. Bert, RoBERTa, LEGAL-BERT)."""
+""" Finetuning models on the ECtHR dataset (e.g. Bert, RoBERTa, LEGAL-BERT)."""
 
 import logging
 import os
@@ -8,15 +8,17 @@ import random
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
+from updates.bow import *
 
 import datasets
+import numpy as np
 from datasets import load_dataset
 from sklearn.metrics import f1_score
 from trainer import MultilabelTrainer
 from scipy.special import expit
+from torch import nn
 import glob
 import shutil
-import numpy as np
 
 import transformers
 from transformers import (
@@ -34,6 +36,8 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
+from models.hierbert import HierarchicalBert
+from models.deberta import DebertaForSequenceClassification
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -65,12 +69,25 @@ class DataTrainingArguments:
         },
     )
 
-
     max_seq_length: Optional[int] = field(
-        default=128,
+        default=4096,
         metadata={
             "help": "The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    max_segments: Optional[int] = field(
+        default=64,
+        metadata={
+            "help": "The maximum number of segments (paragraphs) to be considered. Sequences longer "
+                    "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    max_seg_length: Optional[int] = field(
+        default=128,
+        metadata={
+            "help": "The maximum segment (paragraph) length to be considered. Segments longer "
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     overwrite_cache: bool = field(
@@ -104,6 +121,12 @@ class DataTrainingArguments:
             "value if set."
         },
     )
+    task: Optional[str] = field(
+        default='ecthr_a',
+        metadata={
+            "help": "Define downstream task"
+        },
+    )
     server_ip: Optional[str] = field(default=None, metadata={"help": "For distant debugging."})
     server_port: Optional[str] = field(default=None, metadata={"help": "For distant debugging."})
 
@@ -116,6 +139,9 @@ class ModelArguments:
 
     model_name_or_path: str = field(
         default=None, metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    hierarchical: bool = field(
+        default=True, metadata={"help": "Whether to use a hierarchical variant or not"}
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -156,6 +182,17 @@ def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Fix boolean parameter
+    if model_args.do_lower_case == 'False' or not model_args.do_lower_case:
+        model_args.do_lower_case = False
+    else:
+        model_args.do_lower_case = True
+
+    if model_args.hierarchical == 'False' or not model_args.hierarchical:
+        model_args.hierarchical = False
+    else:
+        model_args.hierarchical = True
+
     # Setup distant debugging if needed
     if data_args.server_ip and data_args.server_port:
         # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
@@ -164,13 +201,6 @@ def main():
         print("Waiting for debugger attach")
         ptvsd.enable_attach(address=(data_args.server_ip, data_args.server_port), redirect_output=True)
         ptvsd.wait_for_attach()
-
-    # Fix boolean parameter
-    if model_args.do_lower_case == 'False' or not model_args.do_lower_case:
-        model_args.do_lower_case = False
-        'Tokenizer do_lower_case False'
-    else:
-        model_args.do_lower_case = True
 
     # Setup logging
     logging.basicConfig(
@@ -215,14 +245,16 @@ def main():
     # download the dataset.
     # Downloading and loading eurlex dataset from the hub.
     if training_args.do_train:
-        train_dataset = load_dataset("lex_glue", "unfair_tos", split="train", data_dir='data', cache_dir=model_args.cache_dir)
+        train_dataset = load_dataset("lex_glue", name=data_args.task, split="train", cache_dir=model_args.cache_dir)
+        train_dataset = train_dataset.map(updateDatasetTextField)
 
     if training_args.do_eval:
-        eval_dataset = load_dataset("lex_glue", "unfair_tos", split="validation", data_dir='data', cache_dir=model_args.cache_dir)
+        eval_dataset = load_dataset("lex_glue", name=data_args.task, split="validation", cache_dir=model_args.cache_dir)
+        eval_dataset = eval_dataset.map(updateDatasetTextField)
 
     if training_args.do_predict:
-        predict_dataset = load_dataset("lex_glue", "unfair_tos", split="test", data_dir='data', cache_dir=model_args.cache_dir)
-
+        predict_dataset = load_dataset("lex_glue", name=data_args.task, split="test", cache_dir=model_args.cache_dir)
+        predict_dataset = predict_dataset.map(updateDatasetTextField)
 
     def textShuffler(text):
         # Split the words into a list
@@ -287,8 +319,6 @@ def main():
         # Return the updated dictionary
         return field
 
-
-
     if data_args.shuffle_enable == 'simple_random_shuffle':
         train_dataset = train_dataset.map(updateDatasetTextField,load_from_cache_file= False ,  desc = "Running shuffler on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextField,load_from_cache_file= False , desc = "Running shuffler on validation dataset")
@@ -298,11 +328,9 @@ def main():
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicateson on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
-
-
-
+        
     # Labels
-    label_list = list(range(8))
+    label_list = list(range(10))
     num_labels = len(label_list)
 
     # Load pretrained model and tokenizer
@@ -311,18 +339,11 @@ def main():
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         num_labels=num_labels,
-        finetuning_task="unfair_toc",
+        finetuning_task=f"{data_args.task}",
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-
-    if config.model_type == 'big_bird':
-        config.attention_type = 'original_full'
-
-    if config.model_type == 'longformer':
-        config.attention_window = [128] * config.num_hidden_layers
-
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         do_lower_case=model_args.do_lower_case,
@@ -331,14 +352,56 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    if config.model_type == 'deberta' and model_args.hierarchical:
+        model = DebertaForSequenceClassification.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
+
+    if model_args.hierarchical:
+        # Hack the classifier encoder to use hierarchical BERT
+        if config.model_type in ['bert', 'deberta']:
+            if config.model_type == 'bert':
+                segment_encoder = model.bert
+            else:
+                segment_encoder = model.deberta
+            model_encoder = HierarchicalBert(encoder=segment_encoder,
+                                             max_segments=data_args.max_seg_length,
+                                             max_segment_length=data_args.max_seq_length)
+            if config.model_type == 'bert':
+                model.bert = model_encoder
+            elif config.model_type == 'deberta':
+                model.deberta = model_encoder
+            else:
+                raise NotImplementedError(f"{config.model_type} is no supported yet!")
+        elif config.model_type == 'roberta':
+            model_encoder = HierarchicalBert(encoder=model.roberta, max_segments=data_args.max_seg_length,
+                                             max_segment_length=data_args.max_seq_length)
+            model.roberta = model_encoder
+            # Build a new classification layer, as well
+            dense = nn.Linear(config.hidden_size, config.hidden_size)
+            dense.load_state_dict(model.classifier.dense.state_dict())  # load weights
+            dropout = nn.Dropout(config.hidden_dropout_prob).to(model.device)
+            out_proj = nn.Linear(config.hidden_size, config.num_labels).to(model.device)
+            out_proj.load_state_dict(model.classifier.out_proj.state_dict())  # load weights
+            model.classifier = nn.Sequential(dense, dropout, out_proj).to(model.device)
+        elif config.model_type in ['longformer', 'big_bird']:
+            pass
+        else:
+            raise NotImplementedError(f"{config.model_type} is no supported yet!")
 
     # Preprocessing the datasets
     # Padding strategy
@@ -350,14 +413,45 @@ def main():
 
     def preprocess_function(examples):
         # Tokenize the texts
-        batch = tokenizer(
-            examples["text"],
-            padding=padding,
-            max_length=data_args.max_seq_length,
-            truncation=True,
-        )
-        batch["labels"] = [[1 if label in labels else 0 for label in label_list] for labels in
-                              examples["labels"]]
+        if model_args.hierarchical:
+            case_template = [[0] * data_args.max_seg_length]
+            if config.model_type == 'roberta':
+                batch = {'input_ids': [], 'attention_mask': []}
+                for case in examples['text']:
+                    case_encodings = tokenizer(case[:data_args.max_segments], padding=padding,
+                                               max_length=data_args.max_seg_length, truncation=True)
+                    batch['input_ids'].append(case_encodings['input_ids'] + case_template * (
+                                data_args.max_segments - len(case_encodings['input_ids'])))
+                    batch['attention_mask'].append(case_encodings['attention_mask'] + case_template * (
+                                data_args.max_segments - len(case_encodings['attention_mask'])))
+            else:
+                batch = {'input_ids': [], 'attention_mask': [], 'token_type_ids': []}
+                for case in examples['text']:
+                    case_encodings = tokenizer(case[:data_args.max_seg_length], padding=padding,
+                                               max_length=data_args.max_seq_length, truncation=True)
+                    batch['input_ids'].append(case_encodings['input_ids'] + case_template * (data_args.max_seg_length - len(case_encodings['input_ids'])))
+                    batch['attention_mask'].append(case_encodings['attention_mask'] + case_template * (data_args.max_seg_length - len(case_encodings['attention_mask'])))
+                    batch['token_type_ids'].append(case_encodings['token_type_ids'] + case_template * (data_args.max_seg_length - len(case_encodings['token_type_ids'])))
+        elif config.model_type in ['longformer', 'big_bird']:
+            cases = []
+            max_position_embeddings = config.max_position_embeddings - 2 if config.model_type == 'longformer' \
+                else config.max_position_embeddings
+            for case in examples['text']:
+                cases.append(f' {tokenizer.sep_token} '.join(
+                    [' '.join(fact.split()[:data_args.max_seg_length]) for fact in case[:data_args.max_segments]]))
+            batch = tokenizer(cases, padding=padding, max_length=max_position_embeddings, truncation=True)
+            if config.model_type == 'longformer':
+                global_attention_mask = np.zeros((len(cases), max_position_embeddings), dtype=np.int32)
+                # global attention on cls token
+                global_attention_mask[:, 0] = 1
+                batch['global_attention_mask'] = list(global_attention_mask)
+        else:
+            cases = []
+            for case in examples['text']:
+                cases.append(f'\n'.join(case))
+            batch = tokenizer(cases, padding=padding, max_length=512, truncation=True)
+
+        batch["labels"] = [[1 if label in labels else 0 for label in label_list] for labels in examples["labels"]]
 
         return batch
 
@@ -368,11 +462,11 @@ def main():
             train_dataset = train_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on train dataset",
             )
         # Log a few random samples from the training set:
-        for index in [0,1,2]:
+        for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
     if training_args.do_eval:
@@ -382,13 +476,9 @@ def main():
             eval_dataset = eval_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on validation dataset",
             )
-
-
-        for index in [0,1,2]:
-            logger.info(f"Sample {index} of the validation set: {eval_dataset[index]}.") 
 
     if training_args.do_predict:
         if data_args.max_predict_samples is not None:
@@ -397,14 +487,9 @@ def main():
             predict_dataset = predict_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on prediction dataset",
             )
-
-        for index in [0,1,2]:
-            logger.info(f"Sample {index} of the prediction set: {predict_dataset[index]}.")
-
-
 
     # You can define your custom compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
     # predictions and label_ids field) and has to return a dictionary string to float.

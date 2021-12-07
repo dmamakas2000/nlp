@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-""" Finetuning models on UNFAIR-ToC (e.g. Bert, RoBERTa, LEGAL-BERT)."""
+""" Finetuning models on EUR-LEX (e.g. Bert, RoBERTa, LEGAL-BERT)."""
 
 import logging
 import os
@@ -8,6 +8,7 @@ import random
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
+from updates.bow import *
 
 import datasets
 from datasets import load_dataset
@@ -16,7 +17,6 @@ from trainer import MultilabelTrainer
 from scipy.special import expit
 import glob
 import shutil
-import numpy as np
 
 import transformers
 from transformers import (
@@ -53,7 +53,6 @@ class DataTrainingArguments:
     into argparse arguments to be able to specify them on
     the command line.
     """
-
     shuffle_enable: Optional[str] = field(
         default="no_shuffle",
         metadata={
@@ -65,9 +64,8 @@ class DataTrainingArguments:
         },
     )
 
-
     max_seq_length: Optional[int] = field(
-        default=128,
+        default=512,
         metadata={
             "help": "The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
@@ -215,14 +213,16 @@ def main():
     # download the dataset.
     # Downloading and loading eurlex dataset from the hub.
     if training_args.do_train:
-        train_dataset = load_dataset("lex_glue", "unfair_tos", split="train", data_dir='data', cache_dir=model_args.cache_dir)
+        train_dataset = load_dataset("lex_glue", "eurlex", split="train", cache_dir=model_args.cache_dir)
+        train_dataset = train_dataset.map(updateDatasetTextField)
 
     if training_args.do_eval:
-        eval_dataset = load_dataset("lex_glue", "unfair_tos", split="validation", data_dir='data', cache_dir=model_args.cache_dir)
+        eval_dataset = load_dataset("lex_glue", "eurlex", split="validation", cache_dir=model_args.cache_dir)
+        eval_dataset = eval_dataset.map(updateDatasetTextField)
 
     if training_args.do_predict:
-        predict_dataset = load_dataset("lex_glue", "unfair_tos", split="test", data_dir='data', cache_dir=model_args.cache_dir)
-
+        predict_dataset = load_dataset("lex_glue", "eurlex", split="test", cache_dir=model_args.cache_dir)
+        predict_dataset = predict_dataset.map(updateDatasetTextField)
 
     def textShuffler(text):
         # Split the words into a list
@@ -244,7 +244,6 @@ def main():
 
     # Sets the word frequency equal to 1 (per word) in a range of given words.
     # Note: This function accepts a list and returns a String of the truncated text.
-    
     def findUniqueWords(wordList):
         # List containing the words - Their frequency is going to be 1
         uniqueWordsList = []
@@ -263,9 +262,6 @@ def main():
     
         # Return the updated text
         return updatedText
-
-
-
     
     def updateDatasetTextField(field):
         # Apply the mapping function
@@ -273,7 +269,6 @@ def main():
     
         # Return the updated dictionary
         return field
-
 
     # Mapper function which updates the dataset based on new, shuffled data without containing duplicates.
     # Note: This function accepts and returs a dictionary.
@@ -286,9 +281,7 @@ def main():
     
         # Return the updated dictionary
         return field
-
-
-
+    
     if data_args.shuffle_enable == 'simple_random_shuffle':
         train_dataset = train_dataset.map(updateDatasetTextField,load_from_cache_file= False ,  desc = "Running shuffler on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextField,load_from_cache_file= False , desc = "Running shuffler on validation dataset")
@@ -298,11 +291,9 @@ def main():
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicateson on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
-
-
-
+    
     # Labels
-    label_list = list(range(8))
+    label_list = list(range(100))
     num_labels = len(label_list)
 
     # Load pretrained model and tokenizer
@@ -311,7 +302,7 @@ def main():
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         num_labels=num_labels,
-        finetuning_task="unfair_toc",
+        finetuning_task="eurlex",
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
@@ -319,9 +310,6 @@ def main():
 
     if config.model_type == 'big_bird':
         config.attention_type = 'original_full'
-
-    if config.model_type == 'longformer':
-        config.attention_window = [128] * config.num_hidden_layers
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
@@ -356,8 +344,7 @@ def main():
             max_length=data_args.max_seq_length,
             truncation=True,
         )
-        batch["labels"] = [[1 if label in labels else 0 for label in label_list] for labels in
-                              examples["labels"]]
+        batch["labels"] = [[1 if label in labels else 0 for label in label_list] for labels in examples["labels"]]
 
         return batch
 
@@ -368,11 +355,11 @@ def main():
             train_dataset = train_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on train dataset",
             )
         # Log a few random samples from the training set:
-        for index in [0,1,2]:
+        for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
     if training_args.do_eval:
@@ -382,13 +369,9 @@ def main():
             eval_dataset = eval_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on validation dataset",
             )
-
-
-        for index in [0,1,2]:
-            logger.info(f"Sample {index} of the validation set: {eval_dataset[index]}.") 
 
     if training_args.do_predict:
         if data_args.max_predict_samples is not None:
@@ -397,31 +380,17 @@ def main():
             predict_dataset = predict_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file= False,
+                load_from_cache_file=False,
                 desc="Running tokenizer on prediction dataset",
             )
-
-        for index in [0,1,2]:
-            logger.info(f"Sample {index} of the prediction set: {predict_dataset[index]}.")
-
-
 
     # You can define your custom compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
     # predictions and label_ids field) and has to return a dictionary string to float.
     def compute_metrics(p: EvalPrediction):
-        # Fix gold labels
-        y_true = np.zeros((p.label_ids.shape[0], p.label_ids.shape[1] + 1), dtype=np.int32)
-        y_true[:, :-1] = p.label_ids
-        y_true[:, -1] = (np.sum(p.label_ids, axis=1) == 0).astype('int32')
-        # Fix predictions
         logits = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
         preds = (expit(logits) > 0.5).astype('int32')
-        y_pred = np.zeros((p.label_ids.shape[0], p.label_ids.shape[1] + 1), dtype=np.int32)
-        y_pred[:, :-1] = preds
-        y_pred[:, -1] = (np.sum(p.label_ids, axis=1) == 0).astype('int32')
-        # Compute scores
-        macro_f1 = f1_score(y_true=y_true, y_pred=y_pred, average='macro', zero_division=0)
-        micro_f1 = f1_score(y_true=y_true, y_pred=y_pred, average='micro', zero_division=0)
+        macro_f1 = f1_score(y_true=p.label_ids, y_pred=preds, average='macro', zero_division=0)
+        micro_f1 = f1_score(y_true=p.label_ids, y_pred=preds, average='micro', zero_division=0)
         return {'macro-f1': macro_f1, 'micro-f1': micro_f1}
 
     # Data collator will default to DataCollatorWithPadding, so we change it if we already did the padding.
@@ -491,9 +460,10 @@ def main():
         output_predict_file = os.path.join(training_args.output_dir, "test_predictions.csv")
         if trainer.is_world_process_zero():
             with open(output_predict_file, "w") as writer:
-                for index, pred_list in enumerate(predictions[0]):
+                for index, pred_list in enumerate(predictions):
                     pred_line = '\t'.join([f'{pred:.5f}' for pred in pred_list])
                     writer.write(f"{index}\t{pred_line}\n")
+
 
     # Clean up checkpoints
     checkpoints = [filepath for filepath in glob.glob(f'{training_args.output_dir}/*/') if '/checkpoint' in filepath]

@@ -358,7 +358,7 @@ def textShuffler(text):
             train_dataset = train_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file=not data_args.overwrite_cache,
+                load_from_cache_file=False,
                 desc="Running tokenizer on train dataset",
             )
         # Log a few random samples from the training set:
@@ -372,7 +372,7 @@ def textShuffler(text):
             eval_dataset = eval_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file=not data_args.overwrite_cache,
+                load_from_cache_file=False,
                 desc="Running tokenizer on validation dataset",
             )
 
@@ -383,7 +383,7 @@ def textShuffler(text):
             predict_dataset = predict_dataset.map(
                 preprocess_function,
                 batched=True,
-                load_from_cache_file=not data_args.overwrite_cache,
+                load_from_cache_file=False,
                 desc="Running tokenizer on prediction dataset",
             )
 
