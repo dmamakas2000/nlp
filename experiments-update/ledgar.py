@@ -8,7 +8,6 @@ import random
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
-from updates.bow import *
 
 import datasets
 from datasets import load_dataset
@@ -221,7 +220,7 @@ def main():
     if training_args.do_predict:
         predict_dataset = load_dataset("lex_glue", "ledgar", split="test", cache_dir=model_args.cache_dir)
 
-def textShuffler(text):
+    def textShuffler(text):
         # Split the words into a list
         list_of_words = text.split(' ')
     
