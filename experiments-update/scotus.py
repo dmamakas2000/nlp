@@ -9,7 +9,6 @@ import re
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
-from updates.bow import * 
 
 import datasets
 from datasets import load_dataset
