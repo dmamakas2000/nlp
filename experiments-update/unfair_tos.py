@@ -296,7 +296,7 @@ def main():
 
     elif data_args.shuffle_enable == 'random_shuffle_no_duplicates':
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
-        eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicateson on validation dataset")
+        eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicates on on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
 
 
