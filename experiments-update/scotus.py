@@ -232,15 +232,12 @@ def main():
     # Downloading and loading eurlex dataset from the hub.
     if training_args.do_train:
         train_dataset = load_dataset("lex_glue", "scotus", split="train", cache_dir=model_args.cache_dir)
-        train_dataset = train_dataset.map(updateDatasetTextField)
 
     if training_args.do_eval:
         eval_dataset = load_dataset("lex_glue", "scotus", split="validation", cache_dir=model_args.cache_dir)
-        eval_dataset = eval_dataset.map(updateDatasetTextField)
 
     if training_args.do_predict:
         predict_dataset = load_dataset("lex_glue", "scotus", split="test", cache_dir=model_args.cache_dir)
-        predict_dataset = predict_dataset.map(updateDatasetTextField)
 
     def textShuffler(text):
         # Split the words into a list
@@ -306,7 +303,7 @@ def main():
 
     elif data_args.shuffle_enable == 'random_shuffle_no_duplicates':
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
-        eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicateson on validation dataset")
+        eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicates on on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
     
     # Labels
