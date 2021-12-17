@@ -39,7 +39,9 @@ def main():
                 continue
 
         score_dicts[model] = score_dict
-
+        
+    f= open("outputs.txt","w+")
+    
     print(f'{" " * 36} {"VALIDATION":<60} | {"TEST":<60}')
     print('-' * 200)
     for algo, stats in score_dicts.items():
@@ -50,7 +52,8 @@ def main():
         report_line += f'MACRO-F1: {np.mean(stats["test"]["macro"])*100:.1f} ± {np.std(stats["test"]["macro"])*100:.1f}\t'
 
         print(report_line)
-
+        
+        f.write(report_line)
 
 if __name__ == '__main__':
     main()
