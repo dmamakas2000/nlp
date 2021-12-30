@@ -8,7 +8,6 @@ import random
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
-from updates.bow import *
 
 import datasets
 import numpy as np
@@ -245,15 +244,30 @@ def main():
     # download the dataset.
     # Downloading and loading eurlex dataset from the hub.
     if training_args.do_train:
-        train_dataset = load_dataset("lex_glue", name=data_args.task, split="train", cache_dir=model_args.cache_dir)
+        train_dataset = load_dataset("lex_glue", name=data_args.task, split="train", data_dir='data', cache_dir=model_args.cache_dir)
 
     if training_args.do_eval:
-        eval_dataset = load_dataset("lex_glue", name=data_args.task, split="validation", cache_dir=model_args.cache_dir)
+        eval_dataset = load_dataset("lex_glue", name=data_args.task, split="validation", data_dir='data', cache_dir=model_args.cache_dir)
 
     if training_args.do_predict:
-        predict_dataset = load_dataset("lex_glue", name=data_args.task, split="test", cache_dir=model_args.cache_dir)
+        predict_dataset = load_dataset("lex_glue", name=data_args.task, split="test", data_dir='data', cache_dir=model_args.cache_dir)
+
+
+    # Python program to convert a list
+    # to string using join() function
+    # Function to convert
+    def listToString(s):
+      # initialize an empty string
+      str1 = " "
+      # return string
+      return (str1.join(s))
+
+
+
 
     def textShuffler(text):
+
+        text = listToString(text)
         # Split the words into a list
         list_of_words = text.split(' ')
     
@@ -316,6 +330,7 @@ def main():
         # Return the updated dictionary
         return field
 
+
     if data_args.shuffle_enable == 'simple_random_shuffle':
         train_dataset = train_dataset.map(updateDatasetTextField,load_from_cache_file= False ,  desc = "Running shuffler on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextField,load_from_cache_file= False , desc = "Running shuffler on validation dataset")
@@ -325,7 +340,9 @@ def main():
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicates on on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
-        
+
+
+
     # Labels
     label_list = list(range(10))
     num_labels = len(label_list)
@@ -376,8 +393,8 @@ def main():
             else:
                 segment_encoder = model.deberta
             model_encoder = HierarchicalBert(encoder=segment_encoder,
-                                             max_segments=data_args.max_seg_length,
-                                             max_segment_length=data_args.max_seq_length)
+                                             max_segments=data_args.max_segments,
+                                             max_segment_length=data_args.max_seg_length)
             if config.model_type == 'bert':
                 model.bert = model_encoder
             elif config.model_type == 'deberta':
@@ -385,8 +402,8 @@ def main():
             else:
                 raise NotImplementedError(f"{config.model_type} is no supported yet!")
         elif config.model_type == 'roberta':
-            model_encoder = HierarchicalBert(encoder=model.roberta, max_segments=data_args.max_seg_length,
-                                             max_segment_length=data_args.max_seq_length)
+            model_encoder = HierarchicalBert(encoder=model.roberta, max_segments=data_args.max_segments,
+                                             max_segment_length=data_args.max_seg_length)
             model.roberta = model_encoder
             # Build a new classification layer, as well
             dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -424,11 +441,14 @@ def main():
             else:
                 batch = {'input_ids': [], 'attention_mask': [], 'token_type_ids': []}
                 for case in examples['text']:
-                    case_encodings = tokenizer(case[:data_args.max_seg_length], padding=padding,
-                                               max_length=data_args.max_seq_length, truncation=True)
-                    batch['input_ids'].append(case_encodings['input_ids'] + case_template * (data_args.max_seg_length - len(case_encodings['input_ids'])))
-                    batch['attention_mask'].append(case_encodings['attention_mask'] + case_template * (data_args.max_seg_length - len(case_encodings['attention_mask'])))
-                    batch['token_type_ids'].append(case_encodings['token_type_ids'] + case_template * (data_args.max_seg_length - len(case_encodings['token_type_ids'])))
+                    case_encodings = tokenizer(case[:data_args.max_segments], padding=padding,
+                                               max_length=data_args.max_seg_length, truncation=True)
+                    batch['input_ids'].append(case_encodings['input_ids'] + case_template * (
+                            data_args.max_segments - len(case_encodings['input_ids'])))
+                    batch['attention_mask'].append(case_encodings['attention_mask'] + case_template * (
+                            data_args.max_segments - len(case_encodings['attention_mask'])))
+                    batch['token_type_ids'].append(case_encodings['token_type_ids'] + case_template * (
+                            data_args.max_segments - len(case_encodings['token_type_ids'])))
         elif config.model_type in ['longformer', 'big_bird']:
             cases = []
             max_position_embeddings = config.max_position_embeddings - 2 if config.model_type == 'longformer' \
