@@ -241,10 +241,10 @@ def main():
         # Return the shuffled text
         return newText
 
-
-    # Sets the word frequency equal to 1 (per word) in a range of given words.
-    # Note: This function accepts a list and returns a String of the truncated text.
-    
+    """
+    Sets the word frequency equal to 1 (per word) in a range of given words.
+    Note: This function accepts a list and returns a String of the truncated text.
+    """
     def findUniqueWords(wordList):
         # List containing the words - Their frequency is going to be 1
         uniqueWordsList = []
@@ -264,9 +264,10 @@ def main():
         # Return the updated text
         return updatedText
 
-
-
-    
+    """
+    Mapper function which updates the dataset based on new, shuffled data.
+    Note: This function accepts and returns a dictionary.
+    """
     def updateDatasetTextField(field):
         # Apply the mapping function
         field['text'] = textShuffler(field['text'])
@@ -274,9 +275,10 @@ def main():
         # Return the updated dictionary
         return field
 
-
-    # Mapper function which updates the dataset based on new, shuffled data without containing duplicates.
-    # Note: This function accepts and returs a dictionary.
+    """
+    Mapper function which updates the dataset based on new, shuffled data without containing duplicates.
+    Note: This function accepts and returns a dictionary.
+    """
     def updateDatasetTextFieldAndRemoveDuplicates(field):
         # Apply the mapping function
         temp = textShuffler(field['text'])
@@ -287,8 +289,6 @@ def main():
         # Return the updated dictionary
         return field
 
-
-
     if data_args.shuffle_enable == 'simple_random_shuffle':
         train_dataset = train_dataset.map(updateDatasetTextField,load_from_cache_file= False ,  desc = "Running shuffler on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextField,load_from_cache_file= False , desc = "Running shuffler on validation dataset")
@@ -298,8 +298,6 @@ def main():
         train_dataset = train_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False ,  desc = "Running shuffler and removing duplicates on train dataset")
         eval_dataset = eval_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False , desc = "Running shuffler and removing duplicates on on validation dataset")
         predict_dataset = predict_dataset.map(updateDatasetTextFieldAndRemoveDuplicates,load_from_cache_file= False, desc = "Running shuffler and removing duplicates on prediction dataset")
-
-
 
     # Labels
     label_list = list(range(8))
